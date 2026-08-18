@@ -1,0 +1,44 @@
+Texel Studio License
+
+Copyright (c) 2026 Emir Yaman Sivrikaya
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to use,
+copy, modify, merge, publish, and distribute the Software, subject to the
+following conditions:
+
+1. GENERATED OUTPUT
+   All assets generated using this Software (sprites, images, tilesets, pixel
+   art, etc.) are fully owned by the person who generated them. You may use
+   generated assets for any purpose — personal, commercial, in games, in
+   products, for sale, or otherwise — without restriction or attribution.
+
+2. SOFTWARE USE
+   You may freely use, modify, and self-host this Software for any purpose,
+   including commercial projects. For example:
+   - Using it internally at a game studio to generate assets
+   - Integrating it into your game development pipeline
+   - Modifying it for your own needs
+   - Running it on your own servers for your team
+
+3. SERVICE RESTRICTION
+   You may NOT offer this Software, or any substantial derivative of it, as
+   a hosted service, API, or SaaS product that competes with texel.studio.
+   Specifically, you may not:
+   - Host it publicly and charge users for access
+   - Offer it as a managed pixel art generation service
+   - Wrap it in an API and sell access to third parties
+
+   Self-hosting for your own use or your organization's internal use is
+   always permitted regardless of this clause.
+
+4. ATTRIBUTION
+   If you redistribute the Software or a derivative, include a link to the
+   original repository: https://github.com/EYamanS/texel-studio
+
+5. NO WARRANTY
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+   AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY ARISING FROM
+   THE USE OF THIS SOFTWARE.

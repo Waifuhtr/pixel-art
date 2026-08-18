@@ -1,0 +1,21 @@
+fastapi>=0.115.0
+uvicorn>=0.30.0
+python-multipart>=0.0.9
+google-genai>=1.0.0
+google-auth>=2.0.0
+Pillow>=10.0.0
+python-dotenv>=1.0.0
+langchain>=1.0.0
+langchain-openai>=0.2.0
+langchain-google-genai>=4.0.0
+langchain-google-vertexai>=3.0.0
+langgraph>=1.0.0
+langgraph-checkpoint-redis>=0.4.0
+langsmith>=0.7.0
+posthog>=3.0.0
+redis>=5.0.0
+boto3>=1.35.0
+
+# Local, API-key-free concept-art generation (CPU, GGUF via stable-diffusion.cpp)
+stable-diffusion-cpp-python>=0.3.0
+huggingface_hub>=0.25.0

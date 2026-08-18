@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+*.db
+output/
+references/
+models/
+.env
+service-account.json
+
+# Local IDE / agent config
+.claude/
