@@ -613,7 +613,14 @@ def thread_exists(gen_id) -> bool:
 # ── System prompt ──
 
 AGENT_TYPE_HINTS = {
-    "block": "This is a BLOCK TILE. Fill EVERY pixel — no transparency (-1). The tile will be placed in a grid next to copies of itself. Cover the entire canvas with the material.",
+    "block": (
+        "This is a BLOCK TILE. Fill EVERY pixel — no transparency (-1). The tile will be placed "
+        "in a grid next to copies of itself.\n"
+        "A single flat colour is NOT an acceptable tile. After the base fill you MUST break it up: "
+        "add material texture with noise_fill_rect (or voronoi_fill for stone/cobble), then shade — "
+        "lighter pixels near the top edge, darker near the bottom — and place individual detail "
+        "pixels. Use at least 3 different palette colours."
+    ),
     "icon": "This is an ITEM ICON. Draw the object shape and use -1 (transparent) for the background. Keep it compact, chunky, and recognizable. Leave some transparent padding around the edges.",
     "character": "This is a CHARACTER SPRITE. Draw a character on transparent background (-1). Make the silhouette clear and recognizable. Leave transparent padding around the edges.",
     "freeform": "This is a FREEFORM sprite. Use your best judgment for the composition. If the subject is a standalone object or character, use -1 (transparent) for the background. If it's a scene, pattern, or texture, fill the entire canvas.",
@@ -694,17 +701,89 @@ COORDINATE SYSTEM:
 TOOLS:
 {tools_text}
 
-WORKFLOW:
+WORKFLOW (every step is required, in order):
 1. Plan what to draw — think about the shape, then the colors
 2. Fill large areas first with fill_rect
 3. Call view_canvas to see your progress
-4. Add details with draw_pixel or draw_pixels
-5. Call view_canvas again to check
-6. Use noise_fill_rect to add texture variation if needed
-7. Final view_canvas to verify everything looks right
-8. Call finish when done
+4. Add TEXTURE with noise_fill_rect — a flat fill is never a finished sprite
+5. Add SHADING — lighter colours where light hits, darker colours in recesses and edges
+6. Add individual detail pixels with draw_pixel or draw_pixels
+7. Call view_canvas again and fix anything that looks wrong
+8. Only once the sprite is genuinely detailed, call finish()
+
+HARD RULES — breaking these means the sprite is rejected:
+- NEVER stop after a single fill_rect. One flat colour is a blank tile, not pixel art.
+- Use at least 3 different palette colours (all of them, if the palette is small).
+- Answer by CALLING A TOOL, never with prose. Do not write "let me know if you want details" —
+  just draw the details. If you think you are done, prove it by calling finish().
 
 IMPORTANT: Call view_canvas after every few drawing steps. It shows you exactly what the canvas looks like so you can correct mistakes early."""
+
+
+# ── Output quality gate ──
+#
+# Small local models reliably fail the same way: they run one fill_rect, call
+# view_canvas, see a full canvas, and answer in prose ("the canvas is now
+# completely filled, let me know if you want details"). LangGraph's ReAct loop
+# treats a message without tool calls as "the agent is done", so the run ends
+# with a flat single-colour tile.
+#
+# Rather than trusting the model's own sense of completion, inspect the canvas
+# and, when it is objectively unfinished, hand the model a concrete complaint
+# and make it keep working.
+
+def _canvas_quality_issue(canvas: Canvas, sprite_type: str) -> str | None:
+    """Describe what is wrong with the canvas, or None when it looks finished."""
+    counts: dict[int, int] = {}
+    for row in canvas.pixels:
+        for v in row:
+            counts[v] = counts.get(v, 0) + 1
+
+    total = canvas.size * canvas.size
+    transparent = counts.get(-1, 0)
+    filled = total - transparent
+    drawn_colors = [c for idx, c in counts.items() if idx >= 0]
+    distinct = len(drawn_colors)
+    palette_n = len(canvas.palette)
+
+    if filled == 0:
+        return "The canvas is still completely empty — nothing has been drawn."
+
+    if sprite_type == "block" and transparent > 0:
+        return (f"{transparent} of {total} pixels are still transparent, but a block tile "
+                "must fill every single pixel edge to edge.")
+
+    if sprite_type in ("icon", "character") and filled == total:
+        return ("The sprite covers the entire canvas with no transparent background. "
+                "An icon/character needs transparent padding (-1) around its silhouette.")
+
+    if palette_n > 1 and distinct <= 1:
+        return ("The whole sprite is one flat colour. That is not pixel art — it needs texture "
+                "and shading built from the other palette colours.")
+
+    if palette_n >= 3 and filled:
+        dominant = max(drawn_colors)
+        if dominant / filled > 0.90:
+            pct = round(dominant / filled * 100)
+            return (f"{pct}% of the sprite is a single colour, so it still reads as a flat fill. "
+                    "Add texture and shading with the other palette colours.")
+
+    return None
+
+
+def _nudge_message(issue: str, canvas: Canvas, sprite_type: str) -> str:
+    return f"""You are NOT finished. A reviewer looked at your sprite and rejected it:
+
+{issue}
+
+CURRENT CANVAS:
+{canvas.to_grid_string()}
+
+{AGENT_TYPE_HINTS.get(sprite_type, AGENT_TYPE_HINTS["block"])}
+
+Fix it now by calling the drawing tools — noise_fill_rect for material texture, then shading with
+lighter and darker palette colours, then individual detail pixels. Do not reply with prose.
+Call finish() only after the canvas actually looks like a detailed sprite."""
 
 
 # ── Run agent (initial or continuation) ──
@@ -786,23 +865,60 @@ Use the canvas tools to make the requested changes. Call finish when done."""
     if ph_callback:
         config["callbacks"] = [ph_callback]
 
-    # Consume the full stream — don't break early to avoid GeneratorExit in LangSmith
-    try:
-        stream = agent.stream(
-            {"messages": [input_message]},
-            config=config,
-            stream_mode="updates",
-        )
-        _drive_stream(stream, canvas, on_step, cancel_check, max_steps)
-    except Exception as e:
-        # Hitting the recursion limit means the model never called finish(). The
-        # pixels it did place are still worth keeping, so surface it as a note
-        # and return the canvas instead of failing the whole generation.
-        if type(e).__name__ == "GraphRecursionError":
-            if on_step:
-                on_step(canvas, "thought", "Adım sınırına ulaşıldı — mevcut hâli kaydediliyor.")
-        else:
+    def _canceled() -> bool:
+        if cancel_check is None:
+            return False
+        try:
+            return bool(cancel_check())
+        except Exception:
+            return False
+
+    # The model deciding "I'm done" is not enough — see _canvas_quality_issue.
+    # Re-enter the graph with a specific complaint until the canvas passes or we
+    # run out of budget. Continuation (chat) turns are the user's own edit
+    # request, so they are not second-guessed.
+    max_nudges = 0 if not is_new else int(os.getenv("AGENT_MAX_NUDGES", "3"))
+    next_message = input_message
+    steps_used = 0
+    nudges = 0
+
+    while True:
+        try:
+            stream = agent.stream(
+                {"messages": [next_message]},
+                config=config,
+                stream_mode="updates",
+            )
+            # Consume the full stream — don't break early to avoid GeneratorExit in LangSmith
+            steps_used += _drive_stream(
+                stream, canvas, on_step, cancel_check, max(1, max_steps - steps_used)
+            )
+        except Exception as e:
+            # Hitting the recursion limit means the model never called finish(). The
+            # pixels it did place are still worth keeping, so surface it as a note
+            # and return the canvas instead of failing the whole generation.
+            if type(e).__name__ == "GraphRecursionError":
+                if on_step:
+                    on_step(canvas, "thought", "Adım sınırına ulaşıldı — mevcut hâli kaydediliyor.")
+                break
             raise
+
+        if _canceled():
+            break
+
+        issue = _canvas_quality_issue(canvas, sprite_type)
+        if issue is None:
+            break
+        if nudges >= max_nudges or steps_used >= max_steps:
+            if on_step:
+                on_step(canvas, "thought", f"Kalite uyarısı (düzeltilemedi): {issue}")
+            break
+
+        nudges += 1
+        if on_step:
+            on_step(canvas, "thought",
+                    f"Kalite kontrolü {nudges}/{max_nudges}: {issue} Ajan çalışmaya devam ediyor.")
+        next_message = HumanMessage(content=_nudge_message(issue, canvas, sprite_type))
 
     return canvas
 
@@ -852,3 +968,5 @@ def _drive_stream(stream, canvas, on_step, cancel_check, max_steps):
 
                 if step_count >= max_steps:
                     finished = True
+
+    return step_count

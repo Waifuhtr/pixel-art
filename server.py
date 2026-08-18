@@ -961,6 +961,69 @@ def serve_reference(ref_id: str):
         raise HTTPException(404)
     return Response(content=data, media_type="image/png")
 
+@app.get("/api/reference/{ref_id}/palette")
+def reference_palette(ref_id: str, n: int = 8):
+    """Extract a palette from a reference image.
+
+    Without this the agent paints a green mossy reference using whatever
+    default palette happens to be loaded, and the sprite cannot match the
+    concept art no matter how well the agent draws.
+    """
+    import storage
+    n = max(2, min(16, n))
+    data = storage.read_file(f"references/{ref_id}")
+    if not data:
+        raise HTTPException(404)
+
+    img = Image.open(io.BytesIO(data)).convert("RGB")
+    # Downscale first: median-cut on a thumbnail picks the dominant material
+    # colours instead of anti-aliasing noise, and it is much faster.
+    img.thumbnail((128, 128))
+    quantized = img.quantize(colors=n, method=Image.Quantize.MEDIANCUT)
+
+    raw = quantized.getpalette() or []
+    used = sorted(quantized.getcolors() or [], key=lambda c: -c[0])  # (count, index)
+    colors = []
+    for _, idx in used:
+        r, g, b = raw[idx * 3: idx * 3 + 3]
+        hexval = f"#{r:02x}{g:02x}{b:02x}"
+        if hexval not in colors:
+            colors.append(hexval)
+
+    def rgb(h):
+        return tuple(int(h[i:i + 2], 16) for i in (1, 3, 5))
+
+    def luma(h):
+        r, g, b = rgb(h)
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+    # Darkest first reads more naturally as a shading ramp than frequency order.
+    colors.sort(key=luma)
+
+    # Median cut happily returns near-identical neighbours (#223b1d/#233c1e).
+    # In a pixel-art palette those are wasted slots — the agent picks between
+    # colours it cannot visually distinguish — so merge anything too close.
+    # Back the threshold off if it would leave too few shades to shade with.
+    def dedupe(min_dist: int) -> list[str]:
+        out: list[str] = []
+        for c in colors:
+            if not out:
+                out.append(c)
+                continue
+            pr, pg, pb = rgb(out[-1])
+            cr, cg, cb = rgb(c)
+            if (pr - cr) ** 2 + (pg - cg) ** 2 + (pb - cb) ** 2 >= min_dist ** 2:
+                out.append(c)
+        return out
+
+    target = min(4, len(colors))
+    for threshold in (24, 16, 10, 6, 0):
+        merged = dedupe(threshold)
+        if len(merged) >= target:
+            break
+
+    return {"colors": merged}
+
 # ── Generation endpoints ──
 
 @app.get("/api/generations")
