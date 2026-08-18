@@ -15,7 +15,9 @@ langsmith>=0.7.0
 posthog>=3.0.0
 redis>=5.0.0
 boto3>=1.35.0
-
-# Local, API-key-free concept-art generation (CPU, GGUF via stable-diffusion.cpp)
-stable-diffusion-cpp-python>=0.3.0
 huggingface_hub>=0.25.0
+
+# stable-diffusion-cpp-python is intentionally NOT listed here — it compiles
+# stable-diffusion.cpp from source (slow, memory-heavy) and is installed in
+# its own Dockerfile RUN step so that step gets its own build-cache layer and
+# controlled/verbose build flags instead of being bundled with the rest.
