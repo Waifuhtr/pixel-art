@@ -2,9 +2,10 @@ FROM python:3.11-slim-bookworm
 
 # build-essential + cmake: stable-diffusion-cpp-python compiles stable-diffusion.cpp
 # from source at pip-install time. curl: installs Ollama and is used by the
-# entrypoint's readiness check.
+# entrypoint's readiness check. zstd: Ollama's own installer now ships its
+# archive zstd-compressed and fails ("requires zstd for extraction") without it.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential cmake git curl ca-certificates \
+        build-essential cmake git curl ca-certificates zstd \
     && rm -rf /var/lib/apt/lists/*
 
 # Official installer — CPU-only host is fine, Ollama falls back to CPU automatically.
