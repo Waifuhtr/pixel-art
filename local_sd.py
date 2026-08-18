@@ -32,8 +32,14 @@ _lock = threading.Lock()
 
 
 def enabled() -> bool:
-    """True when local SD should be used instead of Gemini for reference images."""
-    return os.getenv("USE_LOCAL_SD", "").lower() in ("1", "true", "yes")
+    """True when local SD should be used instead of Gemini for reference images.
+
+    Defaults to True — this fork exists to run without any API key, so an
+    operator who forgets to set USE_LOCAL_SD in the Space's env vars should
+    still get the local/free path, not a "No Gemini credentials" crash.
+    Set USE_LOCAL_SD=false explicitly to opt back into Gemini.
+    """
+    return os.getenv("USE_LOCAL_SD", "true").lower() not in ("0", "false", "no")
 
 
 def _ensure_weights() -> str:

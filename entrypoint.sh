@@ -11,7 +11,7 @@ set -e
 # silently breaks its model cache. So: read the app's meaning first, start
 # the daemon with that var unset (its own default storage dir), then export
 # the app's meaning only for the Python process.
-APP_OLLAMA_MODELS="${OLLAMA_MODELS:-ggml-org/gemma-4-E4B-it-GGUF:Q8_0}"
+APP_OLLAMA_MODELS="${OLLAMA_MODELS:-qwen2.5:3b}"
 OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434}"
 
 echo "[entrypoint] starting ollama serve..."
