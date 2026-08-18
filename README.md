@@ -16,7 +16,8 @@ yerine, tamamen yerel/ücretsiz çalışan iki model kullanır — bir Hugging F
 Space container'ı içinde, API anahtarı gerekmeden.
 
 > Bu repo **arayüzü içermez.** Arayüz (HTML/CSS/JS) ayrı bir zip olarak
-> teslim edildi — kurulum için aşağıdaki "Arayüzü ekleme" bölümüne bakın.
+> teslim edildi — kurulum için aşağıdaki "Hugging Face Space'e kurulum"
+> bölümüne bakın.
 
 ## Mimari — iki farklı model, iki farklı iş
 
@@ -67,33 +68,56 @@ sorunu hemen gösterir, söylerseniz birlikte düzeltiriz.
 
 ## Hugging Face Space'e kurulum
 
-1. HF'de yeni bir Space oluşturun → SDK: **Docker** (Gradio değil).
-2. Bu GitHub deposundaki dosyaları Space'inizin deposuna taşıyın —
-   hangisi kolayınıza gelirse: Space ayarlarından "Sync with a GitHub
-   repository" ile bu depoyu bağlayabilir, ya da bu depoyu lokalde
-   `git clone` edip aynı dosyaları `git remote add space
-   https://huggingface.co/spaces/<kullanıcı>/<space-adı>` ile Space'in git
-   remote'una push edebilirsiniz. Her iki durumda da `Dockerfile` deponun
-   kökünde olduğu için HF otomatik olarak Docker build'i tetikler.
-3. **Arayüzü ekleyin** (bkz. aşağıdaki bölüm) — Dockerfile'daki
-   `COPY . .` satırı, build sırasında `static/` klasöründe ne bulursa
-   image'a onu gömer. Yani tek yapmanız gereken, zip'i açıp içeriğini bu
-   deponun/Space'in `static/` klasörüne (bu placeholder `index.html`'in
-   üzerine) koymak — Dockerfile veya sunucu tarafında başka hiçbir şey
-   değiştirmenize gerek yok, kopyalamayı Docker halleder.
-4. Space "Settings → Variables and secrets" kısmından `.env.example`'daki
-   değişkenleri girin (hepsi opsiyonel varsayılanlarla gelir, hiçbirini
-   girmeseniz de local-SD + local-Ollama ile ayağa kalkar).
-5. Build'i başlatın. İlk build birkaç dakika sürer (stable-diffusion.cpp
-   kaynaktan derleniyor + Ollama indiriliyor).
+**Önemli:** HF Space'in Docker build'i yalnızca **Space'in kendi git
+deposundaki** dosyalara bakar — bu GitHub deposundan haberi yoktur. Yani
+Space'e sadece arayüz zip'ini atarsanız `Dockerfile`, `server.py`,
+`local_sd.py`, `entrypoint.sh` (modeli indiren kod) ortada olmaz; build
+başarısız olur ya da HF Docker SDK algılayamayıp siteyi çıplak statik HTML
+olarak sunar — bu durumda `app.js`'in çağırdığı `/api/...` uçları 404
+döner. Backend'i (bu depo) ve arayüzü (ayrı verilen zip) **birlikte**,
+aynı Space deposuna koymanız gerekiyor. İki yol:
 
-### Arayüzü ekleme
+### A) Git ile (önerilen — sonraki güncellemeler için de kolay)
 
-Ayrı verdiğim zip'i açın, içindeki `index.html`, `style.css`, `app.js`
-dosyalarını bu deponun **kök dizinindeki `static/` klasörüne** kopyalayın
-(bu placeholder `index.html`'in yerine). Backend zaten `static/`'i `/`
-altında servis ediyor (`server.py` son satırları) — başka hiçbir
-konfigürasyon gerekmiyor.
+```bash
+git clone --branch claude/texel-studio-analysis-9u37oy https://github.com/Waifuhtr/pixel-art.git
+cd pixel-art
+
+# Arayüz zip'ini açıp static/ içine koyun (placeholder index.html'in üzerine)
+unzip ~/Downloads/pixel-art-studio-frontend.zip -d /tmp/frontend
+cp /tmp/frontend/index.html /tmp/frontend/style.css /tmp/frontend/app.js static/
+
+# huggingface.co'da SDK: Docker seçerek BOŞ bir Space oluşturun, adresini not edin,
+# sonra o Space'i ikinci bir git remote olarak ekleyip push edin:
+git remote add space https://huggingface.co/spaces/<kullanici-adiniz>/<space-adi>
+git push space claude/texel-studio-analysis-9u37oy:main
+```
+
+Push için bir Hugging Face access token gerekir (huggingface.co/settings/tokens
+→ "Write" yetkili token; `huggingface-cli login` ile bir kere girip
+credential helper'a bıraktırabilir, ya da URL'ye
+`https://<kullanici>:<token>@huggingface.co/spaces/...` şeklinde gömebilirsiniz —
+token'ı hiçbir yere commit etmeyin).
+
+### B) Tarayıcıdan sürükle-bırak (git kullanmadan)
+
+1. GitHub'da bu depo → **Code → Download ZIP**, indirip açın.
+2. Ayrı verdiğim arayüz zip'ini açın, içindeki `index.html`, `style.css`,
+   `app.js` dosyalarını, az önce açtığınız klasörün **`static/`**
+   alt klasörüne kopyalayın (placeholder `index.html`'in üzerine).
+3. huggingface.co'da SDK: **Docker** ile yeni bir Space oluşturun.
+4. Space sayfası → **Files** sekmesi → **Add file → Upload files** →
+   açtığınız klasörün TÜM içeriğini (Dockerfile, `*.py` dosyaları,
+   `jobs/` klasörü, içi dolu `static/` klasörü, `requirements.txt`,
+   `README.md`, vb.) tek seferde sürükleyip bırakın → commit edin.
+
+Her iki yolda da commit atılır atılmaz HF otomatik Docker build'i
+başlatır; `entrypoint.sh` container ayağa kalkınca SD-Turbo GGUF'u ve
+Ollama modelini kendi indirir (ilk açılış birkaç dakika sürer).
+
+Ardından Space "Settings → Variables and secrets" kısmından
+`.env.example`'daki değişkenleri girin (hepsi opsiyonel varsayılanlarla
+gelir, hiçbirini girmeseniz de local-SD + local-Ollama ile ayağa kalkar).
 
 ### Kalıcı depolama (opsiyonel)
 
