@@ -79,7 +79,43 @@ OPENAI_MODELS_CUSTOM = [m.strip() for m in os.getenv("OPENAI_MODELS", "").split(
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODELS = [m.strip() for m in os.getenv("OLLAMA_MODELS", "").split(",") if m.strip()]
 ALL_MODELS = GEMINI_MODELS + OPENAI_MODELS + OPENAI_MODELS_CUSTOM + OLLAMA_MODELS
-DEFAULT_MODEL = "gemini-3-flash-preview"
+
+
+def has_gemini_creds() -> bool:
+    return bool(
+        os.getenv("GEMINI_API_KEY")
+        or os.getenv("GOOGLE_API_KEY")
+        or os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON_CONTENT")
+        or os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+    )
+
+
+def has_openai_creds() -> bool:
+    return bool(os.getenv("OPENAI_API_KEY") or os.getenv("OPENAI_BASE_URL"))
+
+
+def usable_models() -> list[str]:
+    """Models this deployment can actually reach, in preference order.
+
+    Offering a Gemini model on a keyless local install just moves the failure
+    from setup time to generation time ("No Gemini credentials found" mid-paint),
+    so hide what cannot work.
+    """
+    models = list(OLLAMA_MODELS)
+    if has_openai_creds():
+        models += OPENAI_MODELS_CUSTOM + OPENAI_MODELS
+    else:
+        models += OPENAI_MODELS_CUSTOM  # explicitly registered by the operator
+    if has_gemini_creds():
+        models += GEMINI_MODELS
+    return models or ALL_MODELS
+
+
+# Prefer a model that will actually answer: on a keyless local deployment the
+# first Ollama model, otherwise the original cloud default.
+DEFAULT_MODEL = os.getenv("DEFAULT_MODEL") or (
+    OLLAMA_MODELS[0] if (OLLAMA_MODELS and not has_gemini_creds()) else "gemini-3-flash-preview"
+)
 IMAGE_GEN_MODELS = [
     "gemini-3.1-flash-image-preview",
 ]
@@ -553,7 +589,11 @@ def _run_agent_sse(generation_id: int, message: str, is_continuation: bool = Fal
         yield sse_event("error", {"message": "Generation not found"})
         return
 
-    palette = colors if colors else ["#c8a44e"]
+    # /api/chat calls this without `colors`. Falling straight through to the
+    # single-colour placeholder would hand the agent a 1-colour palette on every
+    # follow-up edit and re-render the sprite with the wrong colours, so read
+    # back what the generation was actually created with.
+    palette = colors or (json.loads(gen["colors"]) if gen["colors"] else None) or ["#c8a44e"]
     size = gen["size"]
     model = gen["model"] or DEFAULT_MODEL
     sprite_type = gen["sprite_type"] or "block"
@@ -1175,7 +1215,7 @@ def health():
 def get_settings():
     return {
         "system_prompt": DEFAULT_SYSTEM_PROMPT,
-        "models": ALL_MODELS,
+        "models": usable_models(),
         "default_model": DEFAULT_MODEL,
         "image_models": IMAGE_GEN_MODELS,
         "default_image_model": DEFAULT_IMAGE_MODEL,
@@ -1184,6 +1224,21 @@ def get_settings():
         "ollama_models": OLLAMA_MODELS,
     }
 
+# ── Startup ──
+
+@app.on_event("startup")
+def _warm_local_sd():
+    """Preload the local SD checkpoint in the background.
+
+    Loading an SD 2.x GGUF runs a one-off v-parameterization probe that costs
+    over a minute of CPU. Doing it while the container boots means the first
+    "generate reference" click doesn't pay for it.
+    """
+    if not local_sd.enabled():
+        return
+    import threading
+    threading.Thread(target=local_sd.warmup, daemon=True).start()
+
 # ── Static files (UI) ──
 
 app.mount("/", StaticFiles(directory=Path(__file__).parent / "static", html=True), name="static")
@@ -1191,4 +1246,9 @@ app.mount("/", StaticFiles(directory=Path(__file__).parent / "static", html=True
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", "8500"))
-    uvicorn.run("server:app", host="0.0.0.0", port=port, reload=os.getenv("RAILWAY_ENVIRONMENT") is None)
+    # Autoreload is a development-only feature: it runs a file-watching parent
+    # process and restarts the app on any write under /app — which on a server
+    # throws away the loaded SD model (2.3GB and ~90s to reload) and burns CPU
+    # that the CPU-only inference needs. Opt in explicitly with DEV_RELOAD=1.
+    reload = os.getenv("DEV_RELOAD", "").lower() in ("1", "true", "yes")
+    uvicorn.run("server:app", host="0.0.0.0", port=port, reload=reload)

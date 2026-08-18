@@ -749,9 +749,15 @@ def run_agent_stream(
     agent = create_react_agent(llm, tools, checkpointer=checkpointer)
 
     if is_new:
-        sys_prompt = build_system_prompt(message, palette, size, style_prompt, reference_b64 is not None, sprite_type, model_name)
+        # Only vision-capable models may receive the reference image. Attaching it
+        # to a text-only local model (qwen2.5, llama3.1, ...) makes the OpenAI-
+        # compatible endpoint reject the whole request with HTTP 400 "Multimodal
+        # data provided, but model does not support multimodal requests", which
+        # kills the generation before the agent draws a single pixel.
+        attach_reference = bool(reference_b64) and vision
+        sys_prompt = build_system_prompt(message, palette, size, style_prompt, attach_reference, sprite_type, model_name)
         user_parts = [{"type": "text", "text": sys_prompt}]
-        if reference_b64:
+        if attach_reference:
             user_parts.append({
                 "type": "image_url",
                 "image_url": {"url": f"data:image/png;base64,{reference_b64}"},
