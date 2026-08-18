@@ -776,22 +776,42 @@ USER REQUEST: {message}
 Use the canvas tools to make the requested changes. Call finish when done."""
         input_message = HumanMessage(content=follow_up)
 
-    config = {"configurable": {"thread_id": thread_id}}
+    # Without a recursion limit a model that never calls finish() loops until the
+    # transport gives up. LangGraph counts super-steps (an LLM turn and its tool
+    # turn are two), so budget twice max_steps plus a little slack.
+    config = {"configurable": {"thread_id": thread_id}, "recursion_limit": max_steps * 2 + 8}
 
     # Add PostHog callback if configured
     ph_callback = _get_posthog_callback(distinct_id=str(gen_id), trace_id=f"gen_{gen_id}")
     if ph_callback:
         config["callbacks"] = [ph_callback]
 
+    # Consume the full stream — don't break early to avoid GeneratorExit in LangSmith
+    try:
+        stream = agent.stream(
+            {"messages": [input_message]},
+            config=config,
+            stream_mode="updates",
+        )
+        _drive_stream(stream, canvas, on_step, cancel_check, max_steps)
+    except Exception as e:
+        # Hitting the recursion limit means the model never called finish(). The
+        # pixels it did place are still worth keeping, so surface it as a note
+        # and return the canvas instead of failing the whole generation.
+        if type(e).__name__ == "GraphRecursionError":
+            if on_step:
+                on_step(canvas, "thought", "Adım sınırına ulaşıldı — mevcut hâli kaydediliyor.")
+        else:
+            raise
+
+    return canvas
+
+
+def _drive_stream(stream, canvas, on_step, cancel_check, max_steps):
     step_count = 0
     finished = False
 
-    # Consume the full stream — don't break early to avoid GeneratorExit in LangSmith
-    for chunk in agent.stream(
-        {"messages": [input_message]},
-        config=config,
-        stream_mode="updates",
-    ):
+    for chunk in stream:
         if finished:
             continue  # drain remaining chunks without processing
 
@@ -832,5 +852,3 @@ Use the canvas tools to make the requested changes. Call finish when done."""
 
                 if step_count >= max_steps:
                     finished = True
-
-    return canvas

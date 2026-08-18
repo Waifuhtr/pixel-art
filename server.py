@@ -689,15 +689,42 @@ def _run_agent_sse(generation_id: int, message: str, is_continuation: bool = Fal
     t = threading.Thread(target=worker, daemon=True)
     t.start()
 
+    # CPU-only inference is slow: ingesting the ~1.6k-token system prompt alone
+    # can take minutes before the model emits its first tool call, so a hard
+    # 5-minute gap was reported as a timeout while the agent was still working.
+    # Poll frequently instead, keep the connection alive, and only give up after
+    # a genuinely long silence.
+    step_timeout = int(os.getenv("AGENT_STEP_TIMEOUT", "1800"))
+    poll = 10
+    idle = 0
+    last_notice = 0
     while True:
         try:
-            ev = event_queue.get(timeout=300)  # 5 min per event
+            ev = event_queue.get(timeout=poll)
             if ev is None:
                 break
+            idle = 0
+            last_notice = 0
             yield ev
         except queue_mod.Empty:
-            yield sse_event("error", {"message": "Agent timed out (5 min without response)"})
-            break
+            idle += poll
+            if idle >= step_timeout:
+                yield sse_event("error", {
+                    "message": f"Agent yanıt vermedi ({step_timeout}s). "
+                               "Daha küçük bir sprite boyutu ya da daha küçük bir model deneyin."
+                })
+                break
+            if idle - last_notice >= 30:
+                last_notice = idle
+                # Visible progress so a slow local model doesn't look frozen.
+                yield sse_event("log", {
+                    "step": "waiting",
+                    "message": f"model düşünüyor… ({idle}s)",
+                })
+            else:
+                # SSE comment frame: ignored by clients, but keeps proxies and
+                # load balancers from dropping an idle-looking stream.
+                yield ": keepalive\n\n"
 
     db.close()
 

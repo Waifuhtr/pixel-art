@@ -16,10 +16,9 @@ OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434}"
 
 # ── CPU budget ──
 #
-# os.cpu_count()/llama.cpp both see the HOST's cores (64 on a Space), not the
-# container's cgroup quota (8 vCPU). llama.cpp then spawns ~32 spin-waiting
-# threads on 8 usable CPUs and every token crawls. Read the real quota and pin
-# Ollama to that many CPUs so its own auto-detection lands on a sane number.
+# os.cpu_count(), Ollama and llama.cpp all see the HOST's cores (64 on a Space),
+# not the container's cgroup quota (8 vCPU), so every thread-pool default is
+# wildly oversized. Read the real quota once and feed it to each consumer.
 detect_cpus() {
     if [ -r /sys/fs/cgroup/cpu.max ]; then
         read -r quota period < /sys/fs/cgroup/cpu.max
@@ -42,15 +41,13 @@ detect_cpus() {
 CPUS="$(detect_cpus)"
 echo "[entrypoint] usable CPUs (cgroup-aware): $CPUS"
 
-OLLAMA_LAUNCH=(env -u OLLAMA_MODELS ollama serve)
-if command -v taskset >/dev/null 2>&1 && [ "$CPUS" -ge 1 ] 2>/dev/null; then
-    # Pinning to CPUS cores keeps llama.cpp from oversubscribing. Harmless if
-    # the scheduler would have given us those cores anyway.
-    OLLAMA_LAUNCH=(taskset -c "0-$((CPUS - 1))" env -u OLLAMA_MODELS ollama serve)
-fi
+# Keep the model resident. Ollama's 5-minute default unloads it while the user
+# is reading the result, and reloading costs ~75s (mmap is disabled on CPU, so
+# it re-reads 1.8GB and redoes the CPU_REPACK).
+export OLLAMA_KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:--1}"
 
 echo "[entrypoint] starting ollama serve..."
-"${OLLAMA_LAUNCH[@]}" &
+env -u OLLAMA_MODELS ollama serve &
 OLLAMA_PID=$!
 
 echo "[entrypoint] waiting for ollama to become ready..."
@@ -78,7 +75,45 @@ for m in "${MODELS[@]}"; do
     fi
 done
 
+# ── Thread-count override ──
+#
+# Ollama sizes llama.cpp's thread pool from the HOST's core count (64 here), so
+# it launched llama-server with n_threads=32 on 8 usable vCPUs — 4x
+# oversubscription of spin-waiting threads, which is why prompt ingestion
+# crawled at ~14 tok/s. Neither an env var nor the OpenAI-compatible endpoint
+# can override that per request, but a derived model with PARAMETER num_thread
+# can. Building it is cheap: it reuses the base model's blobs.
+#
+# num_ctx also matters — the default 4096 barely fits the ~1.6k-token system
+# prompt plus a few tool rounds before the context window starts shifting and
+# the agent forgets its instructions mid-sprite.
+BASE_MODEL="$(echo "${MODELS[0]}" | xargs)"
+TUNED_MODEL="pixelart-agent"
+TUNED_CTX="${AGENT_NUM_CTX:-8192}"
+
+if [ -n "$BASE_MODEL" ]; then
+    echo "[entrypoint] building $TUNED_MODEL from $BASE_MODEL (num_thread=$CPUS, num_ctx=$TUNED_CTX)"
+    printf 'FROM %s\nPARAMETER num_thread %s\nPARAMETER num_ctx %s\n' \
+        "$BASE_MODEL" "$CPUS" "$TUNED_CTX" > /tmp/Modelfile.pixelart
+    if ollama create "$TUNED_MODEL" -f /tmp/Modelfile.pixelart; then
+        APP_OLLAMA_MODELS="$TUNED_MODEL,$APP_OLLAMA_MODELS"
+    else
+        echo "[entrypoint] WARNING: could not create $TUNED_MODEL, using base model as-is"
+    fi
+fi
+
 export OLLAMA_MODELS="$APP_OLLAMA_MODELS"
+
+# Load the agent model now so the first user request doesn't pay the ~75s
+# llama-server startup on top of its own inference time.
+FIRST_MODEL="$(echo "$APP_OLLAMA_MODELS" | cut -d, -f1 | xargs)"
+if [ -n "$FIRST_MODEL" ]; then
+    echo "[entrypoint] pre-loading $FIRST_MODEL into memory..."
+    (curl -sf -m 600 "${OLLAMA_URL}/api/generate" \
+        -d "{\"model\":\"$FIRST_MODEL\",\"prompt\":\"hi\",\"stream\":false,\"keep_alive\":-1}" \
+        >/dev/null 2>&1 && echo "[entrypoint] agent model warm" \
+        || echo "[entrypoint] WARNING: warmup request failed (model loads on first use)") &
+fi
 
 echo "[entrypoint] starting Texel Studio server..."
 python server.py &

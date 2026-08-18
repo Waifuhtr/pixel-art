@@ -17,6 +17,7 @@ handler can use it without re-implementing thread management.
 
 from __future__ import annotations
 
+import os
 import queue as queue_mod
 import threading
 import traceback
@@ -41,7 +42,7 @@ class EventBridge:
     worker thread crashes — see `run_in_thread`).
     """
 
-    def __init__(self, timeout_seconds: float = 600.0):
+    def __init__(self, timeout_seconds: float = float(os.getenv("AGENT_STEP_TIMEOUT", "1800"))):
         self._q: queue_mod.Queue = queue_mod.Queue()
         self._timeout = timeout_seconds
 
