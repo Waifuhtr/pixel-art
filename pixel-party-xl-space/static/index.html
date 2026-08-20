@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pixel Party XL</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'><rect width='8' height='8' fill='%230c0a13'/><rect x='1' y='1' width='3' height='3' fill='%23ff4d9d'/><rect x='4' y='2' width='3' height='3' fill='%234de2ff'/><rect x='2' y='4' width='3' height='3' fill='%23ffd93d'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<div class="scanlines" aria-hidden="true"></div>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true"></span>
+    <div>
+      <h1>PIXEL PARTY XL</h1>
+      <p class="brand-sub">SDXL pixel-art denoiser &middot; Nvidia T4</p>
+    </div>
+  </div>
+  <div class="status" id="status" data-state="loading">
+    <span class="status-dot"></span>
+    <span class="status-text">Başlatılıyor…</span>
+  </div>
+</header>
+
+<main class="layout">
+
+  <!-- ------------------------------------------------------- controls -->
+  <section class="panel controls" aria-label="Üretim ayarları">
+
+    <div class="field">
+      <label class="label" for="prompt">Prompt</label>
+      <textarea id="prompt" rows="3" placeholder="cute dragon" spellcheck="false"></textarea>
+      <div class="prompt-foot">
+        <label class="checkbox">
+          <input type="checkbox" id="append-style" checked>
+          <span>Otomatik <code>. in pixel art style</code> ekle</span>
+        </label>
+        <span class="counter" id="prompt-counter">0</span>
+      </div>
+      <div class="chips" id="presets"></div>
+    </div>
+
+    <div class="field">
+      <label class="label" for="negative">Negatif prompt</label>
+      <input type="text" id="negative" spellcheck="false">
+    </div>
+
+    <details class="field group" id="init-group">
+      <summary class="label">Başlangıç görseli <span class="tag" id="init-tag">kapalı</span></summary>
+      <div class="group-body">
+        <p class="hint">Model kartı: init görselleri bu modelde belirgin fayda sağlıyor.</p>
+        <div class="dropzone" id="dropzone" tabindex="0" role="button">
+          <input type="file" id="init-file" accept="image/*" hidden>
+          <div class="dropzone-empty">
+            <strong>Görsel bırak</strong>
+            <span>veya seçmek için tıkla</span>
+          </div>
+          <div class="dropzone-preview" hidden>
+            <img id="init-preview" alt="Seçilen başlangıç görseli">
+            <button type="button" class="btn-x" id="init-clear" title="Kaldır">✕</button>
+          </div>
+        </div>
+        <div class="slider-row">
+          <label class="label small" for="strength">Değişim gücü</label>
+          <output id="strength-out">0.60</output>
+          <input type="range" id="strength" min="0.1" max="0.95" step="0.05" value="0.6">
+        </div>
+        <p class="hint">Düşük = orijinale sadık, yüksek = daha özgür.</p>
+      </div>
+    </details>
+
+    <div class="grid-2">
+      <div class="field">
+        <label class="label small" for="size">Tuval</label>
+        <select id="size"></select>
+      </div>
+      <div class="field">
+        <label class="label small" for="scheduler">Sampler</label>
+        <select id="scheduler"></select>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="field">
+        <label class="label small" for="pixel-factor">Küçültme</label>
+        <select id="pixel-factor"></select>
+      </div>
+      <div class="field">
+        <label class="label small" for="palette">Palet</label>
+        <select id="palette">
+          <option value="0" selected>Sınırsız</option>
+          <option value="8">8 renk</option>
+          <option value="16">16 renk</option>
+          <option value="24">24 renk</option>
+          <option value="32">32 renk</option>
+          <option value="48">48 renk</option>
+          <option value="64">64 renk</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="slider-row">
+      <label class="label small" for="steps">Adım</label>
+      <output id="steps-out">25</output>
+      <input type="range" id="steps" min="8" max="50" step="1" value="25">
+    </div>
+
+    <div class="slider-row">
+      <label class="label small" for="guidance">CFG</label>
+      <output id="guidance-out">7.5</output>
+      <input type="range" id="guidance" min="1" max="15" step="0.5" value="7.5">
+    </div>
+
+    <div class="field">
+      <span class="label small">Görsel sayısı</span>
+      <div class="segmented" id="count" role="group" aria-label="Görsel sayısı"></div>
+    </div>
+
+    <div class="field">
+      <label class="label small" for="seed">Seed</label>
+      <div class="seed-row">
+        <input type="number" id="seed" min="0" max="2147483647" placeholder="rastgele">
+        <button type="button" class="btn ghost" id="seed-dice" title="Rastgele seed">🎲</button>
+        <button type="button" class="btn ghost" id="seed-clear" title="Temizle">✕</button>
+      </div>
+    </div>
+
+    <button type="button" class="btn primary" id="generate">ÜRET</button>
+    <button type="button" class="btn danger" id="cancel" hidden>İPTAL ET</button>
+
+  </section>
+
+  <!-- --------------------------------------------------------- output -->
+  <section class="panel output" aria-label="Sonuçlar">
+
+    <div class="progress" id="progress" hidden>
+      <div class="progress-head">
+        <span id="progress-label">Kuyrukta…</span>
+        <span id="progress-meta"></span>
+      </div>
+      <div class="progress-track"><div class="progress-bar" id="progress-bar"></div></div>
+    </div>
+
+    <div class="empty" id="empty">
+      <div class="empty-art" aria-hidden="true"></div>
+      <h2>Henüz görsel yok</h2>
+      <p>Bir prompt yaz ve <strong>ÜRET</strong>'e bas. Model 1024px'te çizer, çıktı seçtiğin oranda küçültülerek gerçek piksel sanatına dönüştürülür.</p>
+    </div>
+
+    <div class="gallery" id="gallery"></div>
+
+  </section>
+</main>
+
+<div class="toast" id="toast" hidden></div>
+
+<template id="card-template">
+  <article class="card">
+    <div class="card-image">
+      <img alt="Üretilen piksel sanatı" loading="lazy">
+    </div>
+    <div class="card-meta">
+      <button type="button" class="view-toggle" data-view="pixel">
+        <span class="on">PIXEL</span><span class="off">1024</span>
+      </button>
+      <span class="dims"></span>
+      <button type="button" class="seed-chip" title="Seed'i kopyala ve kilitle"></button>
+    </div>
+    <div class="card-actions">
+      <a class="btn tiny" data-role="dl-pixel" download>PNG</a>
+      <a class="btn tiny" data-role="dl-scaled" download>PNG 8×</a>
+      <a class="btn tiny" data-role="dl-raw" download>1024</a>
+      <button type="button" class="btn tiny" data-role="use-init">INIT →</button>
+    </div>
+  </article>
+</template>
+
+<script src="/app.js"></script>
+</body>
+</html>

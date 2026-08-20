@@ -1,0 +1,29 @@
+# Pinned exactly — this Space runs on billed GPU hardware, so a resolver
+# surprise that only shows up at build time is expensive. Every version below
+# is a combination known to work together on CUDA 12.1 / Turing (T4).
+
+# PyPI's linux wheel for torch 2.4.1 IS the CUDA 12.1 build (it pulls the
+# nvidia-*-cu12 runtime packages with it), so no custom --index-url is needed.
+# cu121 ships sm_75 kernels, which is what the T4 requires.
+torch==2.4.1
+
+diffusers==0.31.0
+transformers==4.44.2
+accelerate==0.34.2
+safetensors==0.4.5
+
+# huggingface_hub must stay <1.0: the 1.x line dropped APIs that diffusers
+# 0.31 / transformers 4.44 still call.
+huggingface_hub==0.25.2
+
+# numpy must stay <2: pinned rather than left open because the 1.x/2.x ABI
+# split silently breaks compiled extensions in this stack.
+numpy==1.26.4
+Pillow==10.4.0
+
+fastapi==0.115.0
+# Pinned too: fastapi's own range would accept anything in the 2.x line, and
+# an unpinned transitive dep is exactly the kind of thing that breaks a build
+# months after it last worked.
+pydantic==2.9.2
+uvicorn[standard]==0.30.6
