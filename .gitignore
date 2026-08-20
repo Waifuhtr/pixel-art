@@ -1,5 +1,10 @@
 venv/
 __pycache__/
+
+# Packaged deliverables built from tracked sources (e.g. the Space zip) —
+# committing one would duplicate files git already has and go stale on the
+# next edit.
+*.zip
 *.db
 output/
 references/
